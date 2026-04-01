@@ -67,3 +67,67 @@ class JobLock(Base):
     job_name: Mapped[str] = mapped_column(String(64), primary_key=True)
     owner: Mapped[str] = mapped_column(String(64), nullable=False)
     locked_until: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+
+class IndexDaily(Base):
+    __tablename__ = "index_daily"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    trade_date: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    open: Mapped[float | None] = mapped_column(Float, nullable=True)
+    high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pre_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    change: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pct_chg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_index_daily_ts_code_trade_date"),)
+
+
+class IndustryBoard(Base):
+    __tablename__ = "industry_board"
+    index_code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    industry_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    industry_code: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    src: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+
+class IndustryBoardMember(Base):
+    __tablename__ = "industry_board_member"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    index_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    con_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    con_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    in_date: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    out_date: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    is_new: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    __table_args__ = (UniqueConstraint("index_code", "con_code", "in_date", name="uq_industry_member"),)
+
+
+class Moneyflow(Base):
+    __tablename__ = "moneyflow"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    trade_date: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    buy_sm_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_sm_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_sm_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_sm_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_md_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_md_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_md_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_md_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_lg_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_lg_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_lg_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_lg_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_elg_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    buy_elg_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_elg_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sell_elg_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_mf_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_mf_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_moneyflow_ts_code_trade_date"),)

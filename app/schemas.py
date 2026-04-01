@@ -67,3 +67,57 @@ class JobRunOut(BaseModel):
 class JobRunPageOut(BaseModel):
     items: list[JobRunOut]
     next_cursor: int | None
+
+
+class IndexDailyOut(BaseModel):
+    ts_code: str
+    trade_date: str
+    close: float | None
+    open: float | None
+    high: float | None
+    low: float | None
+    pre_close: float | None
+    change: float | None
+    pct_chg: float | None
+    vol: float | None
+    amount: float | None
+
+
+class IndustryBoardOut(BaseModel):
+    index_code: str
+    industry_name: str | None
+    level: str | None
+    industry_code: str | None
+    src: str | None
+
+
+class IndustryBoardMemberOut(BaseModel):
+    index_code: str
+    con_code: str
+    con_name: str | None
+    in_date: str | None
+    out_date: str | None
+    is_new: str | None
+
+
+class MoneyflowOut(BaseModel):
+    ts_code: str
+    trade_date: str
+    buy_sm_vol: float | None
+    buy_sm_amount: float | None
+    sell_sm_vol: float | None
+    sell_sm_amount: float | None
+    buy_md_vol: float | None
+    buy_md_amount: float | None
+    sell_md_vol: float | None
+    sell_md_amount: float | None
+    buy_lg_vol: float | None
+    buy_lg_amount: float | None
+    sell_lg_vol: float | None
+    sell_lg_amount: float | None
+    buy_elg_vol: float | None
+    buy_elg_amount: float | None
+    sell_elg_vol: float | None
+    sell_elg_amount: float | None
+    net_mf_vol: float | None
+    net_mf_amount: float | None

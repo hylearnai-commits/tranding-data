@@ -37,3 +37,35 @@ class TradingDataClient:
             headers=self._headers(),
             timeout=30,
         ).json()
+
+    def get_index_daily(self, ts_code: str, start_date: str, end_date: str, limit: int = 2000) -> list[dict]:
+        return requests.get(
+            f"{self.base_url}/api/v1/market/index-daily",
+            params={"ts_code": ts_code, "start_date": start_date, "end_date": end_date, "limit": limit},
+            headers=self._headers(),
+            timeout=30,
+        ).json()
+
+    def get_moneyflow(self, ts_code: str, start_date: str, end_date: str, limit: int = 2000) -> list[dict]:
+        return requests.get(
+            f"{self.base_url}/api/v1/market/moneyflow",
+            params={"ts_code": ts_code, "start_date": start_date, "end_date": end_date, "limit": limit},
+            headers=self._headers(),
+            timeout=30,
+        ).json()
+
+    def get_industry_boards(self, src: str = "SW", limit: int = 1000) -> list[dict]:
+        return requests.get(
+            f"{self.base_url}/api/v1/board/industry",
+            params={"src": src, "limit": limit},
+            headers=self._headers(),
+            timeout=30,
+        ).json()
+
+    def get_industry_board_members(self, index_code: str, limit: int = 3000) -> list[dict]:
+        return requests.get(
+            f"{self.base_url}/api/v1/board/industry/members",
+            params={"index_code": index_code, "limit": limit},
+            headers=self._headers(),
+            timeout=30,
+        ).json()

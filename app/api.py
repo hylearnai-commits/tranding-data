@@ -5,11 +5,30 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import JobRun, StockBasic, StockDaily, TradeCalendar
-from app.schemas import JobRunOut, JobRunPageOut, QualityReportOut, StockBasicOut, StockDailyOut, SyncResult, TradeCalendarOut
+from app.models import IndexDaily, IndustryBoard, IndustryBoardMember, JobRun, Moneyflow, StockBasic, StockDaily, TradeCalendar
+from app.schemas import (
+    IndexDailyOut,
+    IndustryBoardMemberOut,
+    IndustryBoardOut,
+    JobRunOut,
+    JobRunPageOut,
+    MoneyflowOut,
+    QualityReportOut,
+    StockBasicOut,
+    StockDailyOut,
+    SyncResult,
+    TradeCalendarOut,
+)
 from app.services.job_service import execute_sync_job, get_job_run_by_id, list_job_runs_page
 from app.services.sync_service import (
     check_stock_daily_quality,
+    sync_index_daily,
+    sync_index_daily_by_date,
+    sync_industry_board_members,
+    sync_industry_board_members_all,
+    sync_industry_boards,
+    sync_moneyflow,
+    sync_moneyflow_by_date,
     sync_stock_basic,
     sync_stock_daily,
     sync_stock_daily_by_date,
@@ -103,6 +122,91 @@ def _replay_job(db: Session, source: JobRun):
             replay_of_job_run_id=source.id,
             job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
         )
+    if source.job_name.startswith("sync_index_daily_by_date"):
+        trade_date = payload.get("trade_date")
+        if not trade_date:
+            raise ValueError("源任务缺少trade_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_index_daily_by_date_{trade_date}_replay",
+            runner=lambda: sync_index_daily_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"trade_date": trade_date},
+        )
+    if source.job_name.startswith("sync_index_daily_"):
+        ts_code = payload.get("ts_code")
+        start_date = payload.get("start_date")
+        end_date = payload.get("end_date")
+        if not ts_code or not start_date or not end_date:
+            raise ValueError("源任务缺少ts_code/start_date/end_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_index_daily_{ts_code}_replay",
+            runner=lambda: sync_index_daily(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+    if source.job_name.startswith("sync_industry_boards"):
+        src = payload.get("src", "SW")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_industry_boards_{src}_replay",
+            runner=lambda: sync_industry_boards(db, src=src),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"src": src},
+        )
+    if source.job_name.startswith("sync_industry_members_all"):
+        src = payload.get("src", "SW")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_industry_members_all_{src}_replay",
+            runner=lambda: sync_industry_board_members_all(db, src=src),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"src": src},
+        )
+    if source.job_name.startswith("sync_industry_members"):
+        index_code = payload.get("index_code")
+        src = payload.get("src", "SW")
+        if not index_code:
+            raise ValueError("源任务缺少index_code，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_industry_members_{index_code}_replay",
+            runner=lambda: sync_industry_board_members(db, index_code=index_code, src=src),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"index_code": index_code, "src": src},
+        )
+    if source.job_name.startswith("sync_moneyflow_by_date"):
+        trade_date = payload.get("trade_date")
+        if not trade_date:
+            raise ValueError("源任务缺少trade_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_moneyflow_by_date_{trade_date}_replay",
+            runner=lambda: sync_moneyflow_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"trade_date": trade_date},
+        )
+    if source.job_name.startswith("sync_moneyflow_"):
+        ts_code = payload.get("ts_code")
+        start_date = payload.get("start_date")
+        end_date = payload.get("end_date")
+        if not ts_code or not start_date or not end_date:
+            raise ValueError("源任务缺少ts_code/start_date/end_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_moneyflow_{ts_code}_replay",
+            runner=lambda: sync_moneyflow(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
     raise ValueError("当前任务类型暂不支持重放")
 
 
@@ -152,6 +256,85 @@ def get_stock_daily(
                 StockDaily.trade_date <= end_date,
             )
             .order_by(StockDaily.trade_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return rows
+
+
+@router.get("/market/index-daily", response_model=list[IndexDailyOut])
+def get_index_daily(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    limit: int = Query(default=2000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.execute(
+            select(IndexDaily)
+            .where(
+                IndexDaily.ts_code == ts_code,
+                IndexDaily.trade_date >= start_date,
+                IndexDaily.trade_date <= end_date,
+            )
+            .order_by(IndexDaily.trade_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return rows
+
+
+@router.get("/market/moneyflow", response_model=list[MoneyflowOut])
+def get_moneyflow(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    limit: int = Query(default=2000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.execute(
+            select(Moneyflow)
+            .where(
+                Moneyflow.ts_code == ts_code,
+                Moneyflow.trade_date >= start_date,
+                Moneyflow.trade_date <= end_date,
+            )
+            .order_by(Moneyflow.trade_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return rows
+
+
+@router.get("/board/industry", response_model=list[IndustryBoardOut])
+def get_industry_boards(
+    src: str = Query(default="SW"),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(select(IndustryBoard).where(IndustryBoard.src == src).limit(limit)).scalars().all()
+    return rows
+
+
+@router.get("/board/industry/members", response_model=list[IndustryBoardMemberOut])
+def get_industry_board_members(
+    index_code: str = Query(...),
+    limit: int = Query(default=3000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.execute(
+            select(IndustryBoardMember)
+            .where(IndustryBoardMember.index_code == index_code)
+            .order_by(IndustryBoardMember.id.desc())
             .limit(limit)
         )
         .scalars()
@@ -245,6 +428,136 @@ def run_sync_stock_daily_incremental(
             lambda: sync_stock_daily_incremental(db, exchange=exchange, lookback_days=lookback_days),
             max_retries=1,
             job_payload={"exchange": exchange, "lookback_days": lookback_days},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/index-daily", response_model=SyncResult)
+def run_sync_index_daily(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(start_date) != 8 or len(end_date) != 8:
+        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_index_daily_{ts_code}",
+            lambda: sync_index_daily(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/index-daily/by-date", response_model=SyncResult)
+def run_sync_index_daily_by_date(
+    trade_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(trade_date) != 8:
+        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_index_daily_by_date_{trade_date}",
+            lambda: sync_index_daily_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            job_payload={"trade_date": trade_date},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/industry/boards", response_model=SyncResult)
+def run_sync_industry_boards(
+    src: str = Query(default="SW"),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_industry_boards_{src}",
+            lambda: sync_industry_boards(db, src=src),
+            max_retries=1,
+            job_payload={"src": src},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/industry/members", response_model=SyncResult)
+def run_sync_industry_members(
+    index_code: str | None = Query(default=None),
+    src: str = Query(default="SW"),
+    db: Session = Depends(get_db),
+):
+    try:
+        if index_code:
+            result = execute_sync_job(
+                db,
+                f"sync_industry_members_{index_code}",
+                lambda: sync_industry_board_members(db, index_code=index_code, src=src),
+                max_retries=1,
+                job_payload={"index_code": index_code, "src": src},
+            )
+        else:
+            result = execute_sync_job(
+                db,
+                f"sync_industry_members_all_{src}",
+                lambda: sync_industry_board_members_all(db, src=src),
+                max_retries=1,
+                job_payload={"src": src},
+            )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/moneyflow", response_model=SyncResult)
+def run_sync_moneyflow(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(start_date) != 8 or len(end_date) != 8:
+        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_moneyflow_{ts_code}",
+            lambda: sync_moneyflow(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/moneyflow/by-date", response_model=SyncResult)
+def run_sync_moneyflow_by_date(
+    trade_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(trade_date) != 8:
+        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_moneyflow_by_date_{trade_date}",
+            lambda: sync_moneyflow_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            job_payload={"trade_date": trade_date},
         )
     except Exception as e:
         _raise_sync_error(e)

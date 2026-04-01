@@ -5,8 +5,10 @@ import pandas as pd
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.models import StockBasic, StockDaily, TradeCalendar
+from app.models import IndexDaily, IndustryBoard, IndustryBoardMember, Moneyflow, StockBasic, StockDaily, TradeCalendar
 from app.services.tushare_client import TushareClient
+
+DEFAULT_INDEX_CODES = ["000001.SH", "399001.SZ", "399006.SZ", "000300.SH", "000905.SH"]
 
 
 @dataclass
@@ -56,6 +58,69 @@ def _upsert_stock_daily_row(db: Session, row: pd.Series) -> tuple[int, int]:
             setattr(existing, k, v)
         return 0, 1
     db.add(StockDaily(ts_code=ts_code, trade_date=trade_date, **data))
+    return 1, 0
+
+
+def _upsert_index_daily_row(db: Session, row: pd.Series) -> tuple[int, int]:
+    ts_code = _value(row.get("ts_code"))
+    trade_date = _value(row.get("trade_date"))
+    if not ts_code or not trade_date:
+        return 0, 0
+    existing = db.execute(
+        select(IndexDaily).where(IndexDaily.ts_code == ts_code, IndexDaily.trade_date == trade_date)
+    ).scalar_one_or_none()
+    data = {
+        "close": _value(row.get("close")),
+        "open": _value(row.get("open")),
+        "high": _value(row.get("high")),
+        "low": _value(row.get("low")),
+        "pre_close": _value(row.get("pre_close")),
+        "change": _value(row.get("change")),
+        "pct_chg": _value(row.get("pct_chg")),
+        "vol": _value(row.get("vol")),
+        "amount": _value(row.get("amount")),
+    }
+    if existing:
+        for k, v in data.items():
+            setattr(existing, k, v)
+        return 0, 1
+    db.add(IndexDaily(ts_code=ts_code, trade_date=trade_date, **data))
+    return 1, 0
+
+
+def _upsert_moneyflow_row(db: Session, row: pd.Series) -> tuple[int, int]:
+    ts_code = _value(row.get("ts_code"))
+    trade_date = _value(row.get("trade_date"))
+    if not ts_code or not trade_date:
+        return 0, 0
+    existing = db.execute(
+        select(Moneyflow).where(Moneyflow.ts_code == ts_code, Moneyflow.trade_date == trade_date)
+    ).scalar_one_or_none()
+    data = {
+        "buy_sm_vol": _value(row.get("buy_sm_vol")),
+        "buy_sm_amount": _value(row.get("buy_sm_amount")),
+        "sell_sm_vol": _value(row.get("sell_sm_vol")),
+        "sell_sm_amount": _value(row.get("sell_sm_amount")),
+        "buy_md_vol": _value(row.get("buy_md_vol")),
+        "buy_md_amount": _value(row.get("buy_md_amount")),
+        "sell_md_vol": _value(row.get("sell_md_vol")),
+        "sell_md_amount": _value(row.get("sell_md_amount")),
+        "buy_lg_vol": _value(row.get("buy_lg_vol")),
+        "buy_lg_amount": _value(row.get("buy_lg_amount")),
+        "sell_lg_vol": _value(row.get("sell_lg_vol")),
+        "sell_lg_amount": _value(row.get("sell_lg_amount")),
+        "buy_elg_vol": _value(row.get("buy_elg_vol")),
+        "buy_elg_amount": _value(row.get("buy_elg_amount")),
+        "sell_elg_vol": _value(row.get("sell_elg_vol")),
+        "sell_elg_amount": _value(row.get("sell_elg_amount")),
+        "net_mf_vol": _value(row.get("net_mf_vol")),
+        "net_mf_amount": _value(row.get("net_mf_amount")),
+    }
+    if existing:
+        for k, v in data.items():
+            setattr(existing, k, v)
+        return 0, 1
+    db.add(Moneyflow(ts_code=ts_code, trade_date=trade_date, **data))
     return 1, 0
 
 
@@ -207,3 +272,164 @@ def check_stock_daily_quality(db: Session, start_date: str, end_date: str, excha
         missing_trade_days=missing_trade_days,
         invalid_price_rows=invalid_price_rows,
     )
+
+
+def sync_index_daily(db: Session, ts_code: str, start_date: str, end_date: str) -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_index_daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        inserted, updated = _upsert_index_daily_row(db, row)
+        counter.inserted += inserted
+        counter.updated += updated
+    db.commit()
+    return counter
+
+
+def sync_index_daily_by_date(db: Session, trade_date: str) -> SyncCounter:
+    client = TushareClient()
+    existing_codes = db.execute(select(func.distinct(IndexDaily.ts_code))).scalars().all()
+    index_codes = list(dict.fromkeys(DEFAULT_INDEX_CODES + existing_codes))
+    counter = SyncCounter()
+    for ts_code in index_codes:
+        df = client.fetch_index_daily(ts_code=ts_code, start_date=trade_date, end_date=trade_date)
+        for _, row in df.iterrows():
+            inserted, updated = _upsert_index_daily_row(db, row)
+            counter.inserted += inserted
+            counter.updated += updated
+    db.commit()
+    return counter
+
+
+def sync_industry_boards(db: Session, src: str = "SW") -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_industry_board_list(src=src)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        index_code = _value(row.get("index_code"))
+        if not index_code:
+            continue
+        existing = db.get(IndustryBoard, index_code)
+        data = {
+            "industry_name": _value(row.get("industry_name")),
+            "level": _value(row.get("level")),
+            "industry_code": _value(row.get("industry_code")),
+            "src": _value(row.get("src")) or src,
+        }
+        if existing:
+            for k, v in data.items():
+                setattr(existing, k, v)
+            counter.updated += 1
+        else:
+            db.add(IndustryBoard(index_code=index_code, **data))
+            counter.inserted += 1
+    db.commit()
+    return counter
+
+
+def sync_industry_board_members(db: Session, index_code: str, src: str = "SW") -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_industry_board_members(index_code=index_code, src=src)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        con_code = _value(row.get("con_code"))
+        in_date = _value(row.get("in_date"))
+        if not con_code:
+            continue
+        existing = db.execute(
+            select(IndustryBoardMember).where(
+                IndustryBoardMember.index_code == index_code,
+                IndustryBoardMember.con_code == con_code,
+                IndustryBoardMember.in_date == in_date,
+            )
+        ).scalar_one_or_none()
+        data = {
+            "con_name": _value(row.get("con_name")),
+            "out_date": _value(row.get("out_date")),
+            "is_new": _value(row.get("is_new")),
+        }
+        if existing:
+            for k, v in data.items():
+                setattr(existing, k, v)
+            counter.updated += 1
+        else:
+            db.add(IndustryBoardMember(index_code=index_code, con_code=con_code, in_date=in_date, **data))
+            counter.inserted += 1
+    db.commit()
+    return counter
+
+
+def sync_industry_board_members_all(db: Session, src: str = "SW") -> SyncCounter:
+    boards = db.execute(select(IndustryBoard.index_code).where(IndustryBoard.src == src)).scalars().all()
+    counter = SyncCounter()
+    for index_code in boards:
+        result = sync_industry_board_members(db=db, index_code=index_code, src=src)
+        counter.inserted += result.inserted
+        counter.updated += result.updated
+    return counter
+
+
+def sync_moneyflow(db: Session, ts_code: str, start_date: str, end_date: str) -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_moneyflow(ts_code=ts_code, start_date=start_date, end_date=end_date)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        inserted, updated = _upsert_moneyflow_row(db, row)
+        counter.inserted += inserted
+        counter.updated += updated
+    db.commit()
+    return counter
+
+
+def sync_moneyflow_by_date(db: Session, trade_date: str) -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_moneyflow_by_date(trade_date=trade_date)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        inserted, updated = _upsert_moneyflow_row(db, row)
+        counter.inserted += inserted
+        counter.updated += updated
+    db.commit()
+    return counter
+
+
+def sync_index_daily_incremental(db: Session, exchange: str = "SSE", lookback_days: int = 3) -> SyncCounter:
+    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    end_date = datetime.now().strftime("%Y%m%d")
+    trade_days = db.execute(
+        select(TradeCalendar.cal_date)
+        .where(
+            TradeCalendar.exchange == exchange,
+            TradeCalendar.is_open == 1,
+            TradeCalendar.cal_date >= start_date,
+            TradeCalendar.cal_date <= end_date,
+        )
+        .order_by(TradeCalendar.cal_date.asc())
+    ).scalars().all()
+    counter = SyncCounter()
+    for trade_date in trade_days:
+        result = sync_index_daily_by_date(db=db, trade_date=trade_date)
+        counter.inserted += result.inserted
+        counter.updated += result.updated
+    return counter
+
+
+def sync_moneyflow_incremental(db: Session, exchange: str = "SSE", lookback_days: int = 3) -> SyncCounter:
+    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    end_date = datetime.now().strftime("%Y%m%d")
+    trade_days = db.execute(
+        select(TradeCalendar.cal_date)
+        .where(
+            TradeCalendar.exchange == exchange,
+            TradeCalendar.is_open == 1,
+            TradeCalendar.cal_date >= start_date,
+            TradeCalendar.cal_date <= end_date,
+        )
+        .order_by(TradeCalendar.cal_date.asc())
+    ).scalars().all()
+    counter = SyncCounter()
+    for trade_date in trade_days:
+        result = sync_moneyflow_by_date(db=db, trade_date=trade_date)
+        counter.inserted += result.inserted
+        counter.updated += result.updated
+    return counter
