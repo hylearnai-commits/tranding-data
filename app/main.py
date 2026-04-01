@@ -5,12 +5,14 @@ from fastapi import Depends, FastAPI
 from app.api import router
 from app.config import settings
 from app.db import Base, engine, run_startup_migrations
+from app.observability import request_observability_middleware, setup_logging
 from app.scheduler import setup_scheduler, shutdown_scheduler
 from app.security import verify_api_key_and_rate_limit
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    setup_logging()
     Base.metadata.create_all(bind=engine)
     run_startup_migrations()
     setup_scheduler()
@@ -20,6 +22,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(router, prefix=settings.api_prefix, dependencies=[Depends(verify_api_key_and_rate_limit)])
+app.middleware("http")(request_observability_middleware)
 
 
 @app.get("/health")

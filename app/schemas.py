@@ -121,3 +121,25 @@ class MoneyflowOut(BaseModel):
     sell_elg_amount: float | None
     net_mf_vol: float | None
     net_mf_amount: float | None
+
+
+class AdjFactorOut(BaseModel):
+    ts_code: str
+    trade_date: str
+    adj_factor: float | None
+
+
+class StockDailyAdjustedOut(BaseModel):
+    ts_code: str
+    trade_date: str
+    adj_type: str
+    factor: float | None
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
+    pre_close: float | None
+    change: float | None
+    pct_chg: float | None
+    vol: float | None
+    amount: float | None

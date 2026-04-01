@@ -44,3 +44,9 @@ class TushareClient:
 
     def fetch_moneyflow_by_date(self, trade_date: str) -> pd.DataFrame:
         return self.pro.moneyflow(trade_date=trade_date)
+
+    def fetch_adj_factor(self, ts_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        return self.pro.adj_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+
+    def fetch_adj_factor_by_date(self, trade_date: str) -> pd.DataFrame:
+        return self.pro.adj_factor(trade_date=trade_date)

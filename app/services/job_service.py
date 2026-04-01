@@ -9,17 +9,21 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import JobLock, JobRun
+from app.observability import get_trace_id, new_trace_id, record_job, set_trace_id
 from app.services.sync_service import SyncCounter
 
 
 def _notify_failure(job_name: str, attempts: int, error_message: str):
     if not settings.alert_enabled or not settings.alert_webhook_url:
         return
+    level = "warning" if attempts <= 1 else ("error" if attempts <= 3 else "critical")
     payload = {
         "event": "sync_job_failed",
         "job_name": job_name,
         "attempts": attempts,
+        "level": level,
         "error_message": error_message,
+        "trace_id": get_trace_id() or new_trace_id(),
         "timestamp": datetime.utcnow().isoformat(),
     }
     try:
@@ -60,6 +64,8 @@ def execute_sync_job(
     replay_of_job_run_id: int | None = None,
     job_payload: dict | None = None,
 ) -> SyncCounter:
+    if not get_trace_id():
+        set_trace_id(new_trace_id())
     owner = _acquire_job_lock(db=db, job_name=job_name)
     attempts = 0
     last_error: Exception | None = None
@@ -85,6 +91,8 @@ def execute_sync_job(
                 run.updated = result.updated
                 run.finished_at = datetime.utcnow()
                 db.commit()
+                duration_ms = (run.finished_at - run.started_at).total_seconds() * 1000
+                record_job(job_name=job_name, status="success", duration_ms=duration_ms)
                 return result
             except Exception as e:
                 last_error = e
@@ -92,6 +100,8 @@ def execute_sync_job(
                 run.error_message = str(e)[:512]
                 run.finished_at = datetime.utcnow()
                 db.commit()
+                duration_ms = (run.finished_at - run.started_at).total_seconds() * 1000
+                record_job(job_name=job_name, status="failed", duration_ms=duration_ms)
         if last_error:
             _notify_failure(job_name=job_name, attempts=attempts, error_message=str(last_error))
             raise last_error

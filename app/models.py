@@ -131,3 +131,12 @@ class Moneyflow(Base):
     net_mf_vol: Mapped[float | None] = mapped_column(Float, nullable=True)
     net_mf_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_moneyflow_ts_code_trade_date"),)
+
+
+class AdjFactor(Base):
+    __tablename__ = "adj_factor"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    trade_date: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    adj_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
+    __table_args__ = (UniqueConstraint("ts_code", "trade_date", name="uq_adj_factor_ts_code_trade_date"),)

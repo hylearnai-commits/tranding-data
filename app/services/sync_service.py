@@ -5,7 +5,7 @@ import pandas as pd
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.models import IndexDaily, IndustryBoard, IndustryBoardMember, Moneyflow, StockBasic, StockDaily, TradeCalendar
+from app.models import AdjFactor, IndexDaily, IndustryBoard, IndustryBoardMember, Moneyflow, StockBasic, StockDaily, TradeCalendar
 from app.services.tushare_client import TushareClient
 
 DEFAULT_INDEX_CODES = ["000001.SH", "399001.SZ", "399006.SZ", "000300.SH", "000905.SH"]
@@ -26,6 +26,17 @@ class QualityReport:
     existing_trade_days: int
     missing_trade_days: int
     invalid_price_rows: int
+
+
+@dataclass
+class BackfillReport:
+    checked_trade_days: int
+    stock_missing_days: list[str]
+    index_missing_days: list[str]
+    moneyflow_missing_days: list[str]
+    stock_result: SyncCounter
+    index_result: SyncCounter
+    moneyflow_result: SyncCounter
 
 
 def _value(v):
@@ -121,6 +132,22 @@ def _upsert_moneyflow_row(db: Session, row: pd.Series) -> tuple[int, int]:
             setattr(existing, k, v)
         return 0, 1
     db.add(Moneyflow(ts_code=ts_code, trade_date=trade_date, **data))
+    return 1, 0
+
+
+def _upsert_adj_factor_row(db: Session, row: pd.Series) -> tuple[int, int]:
+    ts_code = _value(row.get("ts_code"))
+    trade_date = _value(row.get("trade_date"))
+    if not ts_code or not trade_date:
+        return 0, 0
+    existing = db.execute(
+        select(AdjFactor).where(AdjFactor.ts_code == ts_code, AdjFactor.trade_date == trade_date)
+    ).scalar_one_or_none()
+    data = {"adj_factor": _value(row.get("adj_factor"))}
+    if existing:
+        existing.adj_factor = data["adj_factor"]
+        return 0, 1
+    db.add(AdjFactor(ts_code=ts_code, trade_date=trade_date, **data))
     return 1, 0
 
 
@@ -433,3 +460,85 @@ def sync_moneyflow_incremental(db: Session, exchange: str = "SSE", lookback_days
         counter.inserted += result.inserted
         counter.updated += result.updated
     return counter
+
+
+def sync_adj_factor(db: Session, ts_code: str, start_date: str, end_date: str) -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_adj_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        inserted, updated = _upsert_adj_factor_row(db, row)
+        counter.inserted += inserted
+        counter.updated += updated
+    db.commit()
+    return counter
+
+
+def sync_adj_factor_by_date(db: Session, trade_date: str) -> SyncCounter:
+    client = TushareClient()
+    df = client.fetch_adj_factor_by_date(trade_date=trade_date)
+    counter = SyncCounter()
+    for _, row in df.iterrows():
+        inserted, updated = _upsert_adj_factor_row(db, row)
+        counter.inserted += inserted
+        counter.updated += updated
+    db.commit()
+    return counter
+
+
+def _missing_trade_dates_for_table(db: Session, exchange: str, lookback_days: int, date_column) -> tuple[list[str], int]:
+    start_date = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y%m%d")
+    end_date = datetime.now().strftime("%Y%m%d")
+    trade_days = db.execute(
+        select(TradeCalendar.cal_date)
+        .where(
+            TradeCalendar.exchange == exchange,
+            TradeCalendar.is_open == 1,
+            TradeCalendar.cal_date >= start_date,
+            TradeCalendar.cal_date <= end_date,
+        )
+        .order_by(TradeCalendar.cal_date.asc())
+    ).scalars().all()
+    existing_days = db.execute(
+        select(func.distinct(date_column)).where(date_column >= start_date, date_column <= end_date)
+    ).scalars().all()
+    missing = [d for d in trade_days if d not in set(existing_days)]
+    return missing, len(trade_days)
+
+
+def auto_backfill_recent(
+    db: Session, exchange: str = "SSE", lookback_days: int = 10, max_backfill_days: int = 5
+) -> BackfillReport:
+    stock_missing, checked = _missing_trade_dates_for_table(
+        db=db, exchange=exchange, lookback_days=lookback_days, date_column=StockDaily.trade_date
+    )
+    index_missing, _ = _missing_trade_dates_for_table(
+        db=db, exchange=exchange, lookback_days=lookback_days, date_column=IndexDaily.trade_date
+    )
+    moneyflow_missing, _ = _missing_trade_dates_for_table(
+        db=db, exchange=exchange, lookback_days=lookback_days, date_column=Moneyflow.trade_date
+    )
+    stock_counter = SyncCounter()
+    for trade_date in stock_missing[:max_backfill_days]:
+        c = sync_stock_daily_by_date(db=db, trade_date=trade_date)
+        stock_counter.inserted += c.inserted
+        stock_counter.updated += c.updated
+    index_counter = SyncCounter()
+    for trade_date in index_missing[:max_backfill_days]:
+        c = sync_index_daily_by_date(db=db, trade_date=trade_date)
+        index_counter.inserted += c.inserted
+        index_counter.updated += c.updated
+    moneyflow_counter = SyncCounter()
+    for trade_date in moneyflow_missing[:max_backfill_days]:
+        c = sync_moneyflow_by_date(db=db, trade_date=trade_date)
+        moneyflow_counter.inserted += c.inserted
+        moneyflow_counter.updated += c.updated
+    return BackfillReport(
+        checked_trade_days=checked,
+        stock_missing_days=stock_missing,
+        index_missing_days=index_missing,
+        moneyflow_missing_days=moneyflow_missing,
+        stock_result=stock_counter,
+        index_result=index_counter,
+        moneyflow_result=moneyflow_counter,
+    )

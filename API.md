@@ -243,6 +243,67 @@ curl "http://127.0.0.1:8099/api/v1/board/industry/members?index_code=801010.SI&l
 ]
 ```
 
+---
+
+### 3.8 复权因子
+
+`GET /api/v1/market/adj-factor`
+
+参数：
+
+- `ts_code`：必填，如 `000001.SZ`
+- `start_date`：必填
+- `end_date`：必填
+- `limit`：默认 `3000`，范围 `1-10000`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/market/adj-factor?ts_code=000001.SZ&start_date=20260301&end_date=20260331&limit=3"
+```
+
+示例响应：
+
+```json
+[
+  {"ts_code":"000001.SZ","trade_date":"20260331","adj_factor":134.5794},
+  {"ts_code":"000001.SZ","trade_date":"20260330","adj_factor":134.5794}
+]
+```
+
+---
+
+### 3.9 复权价（前复权/后复权）
+
+`GET /api/v1/market/daily/adjusted`
+
+参数：
+
+- `ts_code`：必填
+- `start_date`：必填
+- `end_date`：必填
+- `adj_type`：默认 `qfq`，可选 `qfq|hfq`
+- `limit`：默认 `2000`，范围 `1-10000`
+
+说明：
+
+- `adj_type=qfq`：前复权
+- `adj_type=hfq`：后复权
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/market/daily/adjusted?ts_code=000001.SZ&start_date=20260301&end_date=20260331&adj_type=qfq&limit=2"
+```
+
+示例响应：
+
+```json
+[
+  {"ts_code":"000001.SZ","trade_date":"20260331","adj_type":"qfq","factor":134.5794,"open":11.0,"high":11.18,"low":10.99,"close":11.08,"pre_close":10.99,"change":0.09,"pct_chg":0.8189,"vol":1164565.34,"amount":1294675.716}
+]
+```
+
 ## 4. 同步任务接口
 
 ## 4.1 基础与日历
@@ -317,6 +378,36 @@ curl -X POST "http://127.0.0.1:8099/api/v1/jobs/sync/trade-calendar?exchange=SSE
 
 ```json
 {"inserted":5179,"updated":0}
+```
+
+## 4.6 复权因子
+
+- 区间同步  
+  `POST /api/v1/jobs/sync/adj-factor?ts_code=000001.SZ&start_date=20260301&end_date=20260331`
+- 按交易日全市场同步  
+  `POST /api/v1/jobs/sync/adj-factor/by-date?trade_date=20260331`
+
+示例响应：
+
+```json
+{"inserted":22,"updated":0}
+```
+
+## 4.7 自动回补
+
+- 自动发现缺失交易日并回补（股票日线/指数日线/资金流）  
+  `POST /api/v1/jobs/backfill/recent?exchange=SSE&lookback_days=10&max_backfill_days=5`
+
+参数：
+
+- `exchange`：默认 `SSE`
+- `lookback_days`：默认 `10`，范围 `1-180`
+- `max_backfill_days`：默认 `5`，范围 `1-60`
+
+示例响应：
+
+```json
+{"inserted":0,"updated":0}
 ```
 
 ## 5. 质量检查
@@ -399,7 +490,44 @@ curl -X POST "http://127.0.0.1:8099/api/v1/jobs/runs/12/replay"
 {"inserted":0,"updated":5179}
 ```
 
-## 7. 状态码
+## 7. 可观测性接口
+
+### 7.1 指标快照
+
+`GET /api/v1/ops/metrics`
+
+返回包含：
+
+- `request`：请求总量、平均耗时、QPS、状态码分布、路径分布
+- `job`：任务总量、成功率、平均耗时、按任务名统计
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/ops/metrics"
+```
+
+示例响应：
+
+```json
+{
+  "request":{"total":6,"avg_latency_ms":9.447,"qps_10s":0.2,"qps_60s":0.1,"by_status":{"200":6},"by_path":{"/api/v1/ops/metrics":1}},
+  "job":{"total":2,"success":2,"failed":0,"success_rate":1.0,"avg_duration_ms":2847.631,"by_name":{"sync_adj_factor_000001.SZ":{"total":1,"success":1,"failed":0,"duration_ms_sum":1980.01}}}
+}
+```
+
+### 7.2 链路追踪头
+
+- 可在请求中传 `X-Trace-Id`
+- 服务会在响应头回传 `X-Trace-Id`
+
+示例请求：
+
+```bash
+curl -H "X-Trace-Id: reg-test-trace" "http://127.0.0.1:8099/api/v1/jobs/runs?limit=1" -i
+```
+
+## 8. 状态码
 
 - `200`：成功
 - `400`：参数错误或业务校验失败
@@ -409,7 +537,7 @@ curl -X POST "http://127.0.0.1:8099/api/v1/jobs/runs/12/replay"
 - `429`：超过限流
 - `500`：服务内部错误
 
-## 8. 常见问题
+## 9. 常见问题
 
 ### Q1: 行业板块数据为什么可能是空？
 
@@ -424,3 +552,7 @@ curl -X POST "http://127.0.0.1:8099/api/v1/jobs/runs/12/replay"
 ### Q3: 同步返回 `inserted=0, updated>0` 是异常吗？
 
 - 不是，表示该批数据已存在，本次执行以更新为主
+
+### Q4: 自动回补没补到数据是失败吗？
+
+- 不一定，若近几天没有缺失交易日，返回 `inserted=0, updated=0` 是正常结果

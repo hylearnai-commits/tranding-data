@@ -5,8 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import IndexDaily, IndustryBoard, IndustryBoardMember, JobRun, Moneyflow, StockBasic, StockDaily, TradeCalendar
+from app.models import AdjFactor, IndexDaily, IndustryBoard, IndustryBoardMember, JobRun, Moneyflow, StockBasic, StockDaily, TradeCalendar
+from app.observability import snapshot_metrics
 from app.schemas import (
+    AdjFactorOut,
     IndexDailyOut,
     IndustryBoardMemberOut,
     IndustryBoardOut,
@@ -15,13 +17,18 @@ from app.schemas import (
     MoneyflowOut,
     QualityReportOut,
     StockBasicOut,
+    StockDailyAdjustedOut,
     StockDailyOut,
     SyncResult,
     TradeCalendarOut,
 )
 from app.services.job_service import execute_sync_job, get_job_run_by_id, list_job_runs_page
 from app.services.sync_service import (
+    SyncCounter,
+    auto_backfill_recent,
     check_stock_daily_quality,
+    sync_adj_factor,
+    sync_adj_factor_by_date,
     sync_index_daily,
     sync_index_daily_by_date,
     sync_industry_board_members,
@@ -207,7 +214,55 @@ def _replay_job(db: Session, source: JobRun):
             replay_of_job_run_id=source.id,
             job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
         )
+    if source.job_name.startswith("sync_adj_factor_by_date"):
+        trade_date = payload.get("trade_date")
+        if not trade_date:
+            raise ValueError("源任务缺少trade_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_adj_factor_by_date_{trade_date}_replay",
+            runner=lambda: sync_adj_factor_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"trade_date": trade_date},
+        )
+    if source.job_name.startswith("sync_adj_factor_"):
+        ts_code = payload.get("ts_code")
+        start_date = payload.get("start_date")
+        end_date = payload.get("end_date")
+        if not ts_code or not start_date or not end_date:
+            raise ValueError("源任务缺少ts_code/start_date/end_date，无法重放")
+        return execute_sync_job(
+            db=db,
+            job_name=f"sync_adj_factor_{ts_code}_replay",
+            runner=lambda: sync_adj_factor(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+    if source.job_name.startswith("auto_backfill_recent"):
+        exchange = payload.get("exchange", "SSE")
+        lookback_days = int(payload.get("lookback_days", 10))
+        max_backfill_days = int(payload.get("max_backfill_days", 5))
+        return execute_sync_job(
+            db=db,
+            job_name=f"auto_backfill_recent_{exchange}_replay",
+            runner=lambda: _run_backfill_api_job(db, exchange=exchange, lookback_days=lookback_days, max_backfill_days=max_backfill_days),
+            max_retries=1,
+            replay_of_job_run_id=source.id,
+            job_payload={"exchange": exchange, "lookback_days": lookback_days, "max_backfill_days": max_backfill_days},
+        )
     raise ValueError("当前任务类型暂不支持重放")
+
+
+def _run_backfill_api_job(db: Session, exchange: str, lookback_days: int, max_backfill_days: int):
+    report = auto_backfill_recent(
+        db=db, exchange=exchange, lookback_days=lookback_days, max_backfill_days=max_backfill_days
+    )
+    return SyncCounter(
+        inserted=report.stock_result.inserted + report.index_result.inserted + report.moneyflow_result.inserted,
+        updated=report.stock_result.updated + report.index_result.updated + report.moneyflow_result.updated,
+    )
 
 
 @router.get("/basic/stock", response_model=list[StockBasicOut])
@@ -312,6 +367,102 @@ def get_moneyflow(
         .all()
     )
     return rows
+
+
+@router.get("/market/adj-factor", response_model=list[AdjFactorOut])
+def get_adj_factor(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    limit: int = Query(default=3000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.execute(
+            select(AdjFactor)
+            .where(
+                AdjFactor.ts_code == ts_code,
+                AdjFactor.trade_date >= start_date,
+                AdjFactor.trade_date <= end_date,
+            )
+            .order_by(AdjFactor.trade_date.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    return rows
+
+
+@router.get("/market/daily/adjusted", response_model=list[StockDailyAdjustedOut])
+def get_stock_daily_adjusted(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    adj_type: str = Query(default="qfq", pattern="^(qfq|hfq)$"),
+    limit: int = Query(default=2000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
+    daily_rows = (
+        db.execute(
+            select(StockDaily)
+            .where(
+                StockDaily.ts_code == ts_code,
+                StockDaily.trade_date >= start_date,
+                StockDaily.trade_date <= end_date,
+            )
+            .order_by(StockDaily.trade_date.asc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    factor_rows = (
+        db.execute(
+            select(AdjFactor)
+            .where(
+                AdjFactor.ts_code == ts_code,
+                AdjFactor.trade_date >= start_date,
+                AdjFactor.trade_date <= end_date,
+            )
+            .order_by(AdjFactor.trade_date.asc())
+        )
+        .scalars()
+        .all()
+    )
+    factor_by_date = {x.trade_date: x.adj_factor for x in factor_rows}
+    factor_values = [x.adj_factor for x in factor_rows if x.adj_factor is not None]
+    if not factor_values:
+        factor_values = [1.0]
+    latest_factor = factor_values[-1]
+    earliest_factor = factor_values[0]
+    out = []
+    for row in daily_rows:
+        factor = factor_by_date.get(row.trade_date)
+        if factor is None:
+            ratio = 1.0
+        elif adj_type == "qfq":
+            ratio = factor / latest_factor if latest_factor else 1.0
+        else:
+            ratio = factor / earliest_factor if earliest_factor else 1.0
+        out.append(
+            {
+                "ts_code": row.ts_code,
+                "trade_date": row.trade_date,
+                "adj_type": adj_type,
+                "factor": factor,
+                "open": round(row.open * ratio, 6) if row.open is not None else None,
+                "high": round(row.high * ratio, 6) if row.high is not None else None,
+                "low": round(row.low * ratio, 6) if row.low is not None else None,
+                "close": round(row.close * ratio, 6) if row.close is not None else None,
+                "pre_close": round(row.pre_close * ratio, 6) if row.pre_close is not None else None,
+                "change": round(row.change * ratio, 6) if row.change is not None else None,
+                "pct_chg": row.pct_chg,
+                "vol": row.vol,
+                "amount": row.amount,
+            }
+        )
+    return sorted(out, key=lambda x: x["trade_date"], reverse=True)
 
 
 @router.get("/board/industry", response_model=list[IndustryBoardOut])
@@ -564,6 +715,70 @@ def run_sync_moneyflow_by_date(
     return {"inserted": result.inserted, "updated": result.updated}
 
 
+@router.post("/jobs/sync/adj-factor", response_model=SyncResult)
+def run_sync_adj_factor(
+    ts_code: str = Query(...),
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(start_date) != 8 or len(end_date) != 8:
+        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_adj_factor_{ts_code}",
+            lambda: sync_adj_factor(db, ts_code=ts_code, start_date=start_date, end_date=end_date),
+            max_retries=1,
+            job_payload={"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/sync/adj-factor/by-date", response_model=SyncResult)
+def run_sync_adj_factor_by_date(
+    trade_date: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if len(trade_date) != 8:
+        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+    try:
+        result = execute_sync_job(
+            db,
+            f"sync_adj_factor_by_date_{trade_date}",
+            lambda: sync_adj_factor_by_date(db, trade_date=trade_date),
+            max_retries=1,
+            job_payload={"trade_date": trade_date},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.post("/jobs/backfill/recent", response_model=SyncResult)
+def run_backfill_recent(
+    exchange: str = Query(default="SSE"),
+    lookback_days: int = Query(default=10, ge=1, le=180),
+    max_backfill_days: int = Query(default=5, ge=1, le=60),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = execute_sync_job(
+            db,
+            f"auto_backfill_recent_{exchange}",
+            lambda: _run_backfill_api_job(
+                db, exchange=exchange, lookback_days=lookback_days, max_backfill_days=max_backfill_days
+            ),
+            max_retries=1,
+            job_payload={"exchange": exchange, "lookback_days": lookback_days, "max_backfill_days": max_backfill_days},
+        )
+    except Exception as e:
+        _raise_sync_error(e)
+    return {"inserted": result.inserted, "updated": result.updated}
+
+
 @router.get("/quality/stock-daily", response_model=QualityReportOut)
 def get_stock_daily_quality(
     start_date: str = Query(...),
@@ -599,3 +814,8 @@ def replay_job_run(job_run_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         _raise_sync_error(e)
     return {"inserted": result.inserted, "updated": result.updated}
+
+
+@router.get("/ops/metrics")
+def get_metrics():
+    return snapshot_metrics()

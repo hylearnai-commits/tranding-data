@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -5,6 +7,9 @@ from app.config import settings
 from app.db import SessionLocal
 from app.services.job_service import execute_sync_job
 from app.services.sync_service import (
+    SyncCounter,
+    auto_backfill_recent,
+    sync_adj_factor_by_date,
     sync_index_daily_incremental,
     sync_moneyflow_incremental,
     sync_stock_basic,
@@ -93,6 +98,51 @@ def _run_sync_moneyflow():
         db.close()
 
 
+def _run_sync_adj_factor():
+    db = SessionLocal()
+    try:
+        execute_sync_job(
+            db,
+            "sync_adj_factor_by_date_scheduled",
+            lambda: sync_adj_factor_by_date(db, trade_date=datetime.now().strftime("%Y%m%d")),
+            max_retries=1,
+            job_payload={"trade_date": datetime.now().strftime("%Y%m%d")},
+        )
+    finally:
+        db.close()
+
+
+def _run_auto_backfill():
+    db = SessionLocal()
+    try:
+        execute_sync_job(
+            db,
+            "auto_backfill_recent_scheduled",
+            lambda: _run_backfill_job(db),
+            max_retries=1,
+            job_payload={
+                "exchange": "SSE",
+                "lookback_days": settings.backfill_lookback_days,
+                "max_backfill_days": settings.backfill_max_days,
+            },
+        )
+    finally:
+        db.close()
+
+
+def _run_backfill_job(db):
+    report = auto_backfill_recent(
+        db=db,
+        exchange="SSE",
+        lookback_days=settings.backfill_lookback_days,
+        max_backfill_days=settings.backfill_max_days,
+    )
+    return SyncCounter(
+        inserted=report.stock_result.inserted + report.index_result.inserted + report.moneyflow_result.inserted,
+        updated=report.stock_result.updated + report.index_result.updated + report.moneyflow_result.updated,
+    )
+
+
 def setup_scheduler():
     if not settings.scheduler_enabled:
         return
@@ -106,6 +156,10 @@ def setup_scheduler():
         scheduler.add_job(
             _run_sync_moneyflow, CronTrigger.from_crontab(settings.sync_moneyflow_cron), id="sync_moneyflow"
         )
+        scheduler.add_job(
+            _run_sync_adj_factor, CronTrigger.from_crontab(settings.sync_adj_factor_cron), id="sync_adj_factor"
+        )
+        scheduler.add_job(_run_auto_backfill, CronTrigger.from_crontab(settings.backfill_cron), id="auto_backfill")
         scheduler.start()
 
 

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     sync_daily_lookback_days: int = 3
     sync_index_cron: str = "8 18 * * 1-5"
     sync_moneyflow_cron: str = "12 18 * * 1-5"
+    sync_adj_factor_cron: str = "20 18 * * 1-5"
+    backfill_cron: str = "30 18 * * 1-5"
+    backfill_lookback_days: int = 10
+    backfill_max_days: int = 5
     sync_basic_cron: str = "10 18 * * 1-5"
     sync_calendar_cron: str = "15 18 * * 1-5"
     job_lock_ttl_seconds: int = 900
