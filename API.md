@@ -2,158 +2,45 @@
 
 Base URL 示例：`http://127.0.0.1:8099`
 
-## 认证
+## 0. 快速调用
 
-- 当 `AUTH_ENABLED=true` 时，请在所有 `/api/v1/*` 请求中添加：
+当开启鉴权时：
+
+```bash
+curl -H "X-API-Key: your_key" "http://127.0.0.1:8099/api/v1/jobs/runs?limit=5"
+```
+
+未开启鉴权时：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/jobs/runs?limit=5"
+```
+
+## 1. 认证与限流
+
+- `/health` 不受鉴权限制
+- 其余接口都在 `/api/v1/*`
+- 当 `AUTH_ENABLED=true` 时，必须带请求头：
   - `X-API-Key: your_key`
-- `/health` 不受认证限制
+- 当 `AUTH_ENABLED=false` 时，不需要 API Key
+- 限流按 API Key 统计，窗口 60 秒，阈值由 `RATE_LIMIT_PER_MINUTE` 控制
 
-## 通用说明
+常见返回：
 
-- 日期格式：`YYYYMMDD`
-- 同步接口统一返回：
+- `401`：无 API Key 或 key 无效
+- `429`：超过频率限制
+
+## 2. 通用约定
+
+- 日期参数格式统一为 `YYYYMMDD`
+- 除 `/health` 外，接口前缀统一为 `/api/v1`
+- 同步任务统一返回：
 
 ```json
 {"inserted": 0, "updated": 0}
 ```
 
----
-
-## 1) 基础查询
-
-### 股票基础信息
-
-`GET /api/v1/basic/stock`
-
-参数：
-
-- `list_status`，默认 `L`
-- `limit`，默认 `100`
-
-### 交易日历
-
-`GET /api/v1/calendar/trade-days`
-
-参数：
-
-- `exchange`，默认 `SSE`
-- `start_date`
-- `end_date`
-- `is_open`，默认 `1`
-
----
-
-## 2) 行情与交易数据查询
-
-### 股票日线
-
-`GET /api/v1/market/daily`
-
-参数：
-
-- `ts_code`
-- `start_date`
-- `end_date`
-- `limit`，默认 `2000`
-
-### 指数日线
-
-`GET /api/v1/market/index-daily`
-
-参数：
-
-- `ts_code`
-- `start_date`
-- `end_date`
-- `limit`，默认 `2000`
-
-### 资金流
-
-`GET /api/v1/market/moneyflow`
-
-参数：
-
-- `ts_code`
-- `start_date`
-- `end_date`
-- `limit`，默认 `2000`
-
-### 行业板块列表
-
-`GET /api/v1/board/industry`
-
-参数：
-
-- `src`，默认 `SW`
-- `limit`，默认 `1000`
-
-### 行业板块成分
-
-`GET /api/v1/board/industry/members`
-
-参数：
-
-- `index_code`
-- `limit`，默认 `3000`
-
----
-
-## 3) 同步任务接口
-
-### 股票基础
-
-- `POST /api/v1/jobs/sync/stock-basic`
-
-### 交易日历
-
-- `POST /api/v1/jobs/sync/trade-calendar?exchange=SSE`
-
-### 股票日线
-
-- `POST /api/v1/jobs/sync/stock-daily?ts_code=000001.SZ&start_date=20260301&end_date=20260331`
-- `POST /api/v1/jobs/sync/stock-daily/by-date?trade_date=20260331`
-- `POST /api/v1/jobs/sync/stock-daily/incremental?exchange=SSE&lookback_days=3`
-
-### 指数日线
-
-- `POST /api/v1/jobs/sync/index-daily?ts_code=000300.SH&start_date=20260301&end_date=20260331`
-- `POST /api/v1/jobs/sync/index-daily/by-date?trade_date=20260331`
-
-### 行业板块
-
-- `POST /api/v1/jobs/sync/industry/boards?src=SW`
-- `POST /api/v1/jobs/sync/industry/members?src=SW`
-- `POST /api/v1/jobs/sync/industry/members?index_code=801010.SI&src=SW`
-
-### 资金流
-
-- `POST /api/v1/jobs/sync/moneyflow?ts_code=000001.SZ&start_date=20260301&end_date=20260331`
-- `POST /api/v1/jobs/sync/moneyflow/by-date?trade_date=20260331`
-
----
-
-## 4) 数据质量
-
-### 股票日线质量检查
-
-`GET /api/v1/quality/stock-daily?start_date=20260301&end_date=20260331&exchange=SSE`
-
-返回字段：
-
-- `expected_trade_days`
-- `existing_trade_days`
-- `missing_trade_days`
-- `invalid_price_rows`
-
----
-
-## 5) 任务运维
-
-### 任务运行分页查询
-
-`GET /api/v1/jobs/runs?limit=100&cursor=&job_name=&status=`
-
-返回结构：
+- 分页接口统一返回：
 
 ```json
 {
@@ -162,17 +49,378 @@ Base URL 示例：`http://127.0.0.1:8099`
 }
 ```
 
-### 重放任务
+## 3. 查询接口
 
-`POST /api/v1/jobs/runs/{job_run_id}/replay`
+### 3.1 股票基础信息
+
+`GET /api/v1/basic/stock`
+
+参数：
+
+- `list_status`：默认 `L`
+- `limit`：默认 `100`，范围 `1-5000`
+
+示例：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/basic/stock?list_status=L&limit=20"
+```
 
 ---
 
-## 常见状态码
+### 3.2 交易日历
 
-- `200` 成功
-- `400` 参数错误
-- `401` API Key 无效或缺失
-- `409` 任务锁冲突（同名任务并发）
-- `429` 超过限流
-- `500` 服务内部错误
+`GET /api/v1/calendar/trade-days`
+
+参数：
+
+- `exchange`：默认 `SSE`
+- `start_date`：必填
+- `end_date`：必填
+- `is_open`：默认 `1`，可选 `0/1`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/calendar/trade-days?exchange=SSE&start_date=20260301&end_date=20260310&is_open=1"
+```
+
+示例响应：
+
+```json
+[
+  {"exchange":"SSE","cal_date":"20260302","is_open":1,"pretrade_date":"20260227"},
+  {"exchange":"SSE","cal_date":"20260303","is_open":1,"pretrade_date":"20260302"}
+]
+```
+
+---
+
+### 3.3 股票日线
+
+`GET /api/v1/market/daily`
+
+参数：
+
+- `ts_code`：必填，如 `000001.SZ`
+- `start_date`：必填
+- `end_date`：必填
+- `limit`：默认 `2000`，范围 `1-10000`
+
+返回字段核心：
+
+- `ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/market/daily?ts_code=000001.SZ&start_date=20260301&end_date=20260331&limit=3"
+```
+
+示例响应：
+
+```json
+[
+  {"ts_code":"000001.SZ","trade_date":"20260331","open":11.16,"high":11.28,"low":11.02,"close":11.1,"pre_close":11.22,"change":-0.12,"pct_chg":-1.0695,"vol":1465030.45,"amount":1629087.65}
+]
+```
+
+---
+
+### 3.4 指数日线
+
+`GET /api/v1/market/index-daily`
+
+参数：
+
+- `ts_code`：必填，如 `000300.SH`
+- `start_date`：必填
+- `end_date`：必填
+- `limit`：默认 `2000`，范围 `1-10000`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/market/index-daily?ts_code=000300.SH&start_date=20260301&end_date=20260331&limit=3"
+```
+
+示例响应：
+
+```json
+[
+  {"ts_code":"000300.SH","trade_date":"20260331","close":4450.0493,"open":4491.9209,"high":4523.1745,"low":4450.0493,"pre_close":4491.95,"change":-41.9007,"pct_chg":-0.9328,"vol":224541585.0,"amount":484558113.011}
+]
+```
+
+---
+
+### 3.5 资金流
+
+`GET /api/v1/market/moneyflow`
+
+参数：
+
+- `ts_code`：必填
+- `start_date`：必填
+- `end_date`：必填
+- `limit`：默认 `2000`，范围 `1-10000`
+
+返回字段核心：
+
+- 中小单/中单/大单/特大单买卖量与金额
+- `net_mf_vol, net_mf_amount`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/market/moneyflow?ts_code=000001.SZ&start_date=20260301&end_date=20260331&limit=1"
+```
+
+示例响应：
+
+```json
+[
+  {"ts_code":"000001.SZ","trade_date":"20260331","buy_sm_vol":220384.0,"buy_sm_amount":24495.25,"sell_sm_vol":267507.0,"sell_sm_amount":29751.29,"buy_md_vol":308935.0,"buy_md_amount":34346.84,"sell_md_vol":332617.0,"sell_md_amount":36989.78,"buy_lg_vol":341029.0,"buy_lg_amount":37917.02,"sell_lg_vol":283239.0,"sell_lg_amount":31484.68,"buy_elg_vol":294218.0,"buy_elg_amount":32708.46,"sell_elg_vol":281202.0,"sell_elg_amount":31241.82,"net_mf_vol":231670.0,"net_mf_amount":25828.44}
+]
+```
+
+---
+
+### 3.6 行业板块列表
+
+`GET /api/v1/board/industry`
+
+参数：
+
+- `src`：默认 `SW`
+- `limit`：默认 `1000`，范围 `1-5000`
+
+返回字段核心：
+
+- `index_code, industry_name, level, industry_code, src`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/board/industry?src=SW&limit=3"
+```
+
+示例响应（上游有数据时）：
+
+```json
+[
+  {"index_code":"801010.SI","industry_name":"农林牧渔","level":"L1","industry_code":"801010","src":"SW"},
+  {"index_code":"801020.SI","industry_name":"采掘","level":"L1","industry_code":"801020","src":"SW"}
+]
+```
+
+---
+
+### 3.7 行业板块成分
+
+`GET /api/v1/board/industry/members`
+
+参数：
+
+- `index_code`：必填
+- `limit`：默认 `3000`，范围 `1-10000`
+
+返回字段核心：
+
+- `index_code, con_code, con_name, in_date, out_date, is_new`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/board/industry/members?index_code=801010.SI&limit=3"
+```
+
+示例响应（上游有数据时）：
+
+```json
+[
+  {"index_code":"801010.SI","con_code":"000998.SZ","con_name":"隆平高科","in_date":"20240101","out_date":null,"is_new":"1"}
+]
+```
+
+## 4. 同步任务接口
+
+## 4.1 基础与日历
+
+- `POST /api/v1/jobs/sync/stock-basic`
+- `POST /api/v1/jobs/sync/trade-calendar?exchange=SSE`
+
+示例请求：
+
+```bash
+curl -X POST "http://127.0.0.1:8099/api/v1/jobs/sync/stock-basic"
+curl -X POST "http://127.0.0.1:8099/api/v1/jobs/sync/trade-calendar?exchange=SSE"
+```
+
+示例响应：
+
+```json
+{"inserted":0,"updated":5390}
+```
+
+## 4.2 股票日线
+
+- 区间同步  
+  `POST /api/v1/jobs/sync/stock-daily?ts_code=000001.SZ&start_date=20260301&end_date=20260331`
+- 按交易日全市场同步  
+  `POST /api/v1/jobs/sync/stock-daily/by-date?trade_date=20260331`
+- 增量同步（依赖交易日历）  
+  `POST /api/v1/jobs/sync/stock-daily/incremental?exchange=SSE&lookback_days=3`
+
+示例响应：
+
+```json
+{"inserted":5482,"updated":0}
+```
+
+## 4.3 指数日线
+
+- 区间同步  
+  `POST /api/v1/jobs/sync/index-daily?ts_code=000300.SH&start_date=20260301&end_date=20260331`
+- 按交易日同步（默认指数池 + 已有指数代码）  
+  `POST /api/v1/jobs/sync/index-daily/by-date?trade_date=20260331`
+
+示例响应：
+
+```json
+{"inserted":5,"updated":0}
+```
+
+## 4.4 行业板块
+
+- 同步板块列表  
+  `POST /api/v1/jobs/sync/industry/boards?src=SW`
+- 同步全部板块成分（先确保板块列表已同步）  
+  `POST /api/v1/jobs/sync/industry/members?src=SW`
+- 同步单个板块成分  
+  `POST /api/v1/jobs/sync/industry/members?index_code=801010.SI&src=SW`
+
+示例响应：
+
+```json
+{"inserted":0,"updated":0}
+```
+
+## 4.5 资金流
+
+- 区间同步  
+  `POST /api/v1/jobs/sync/moneyflow?ts_code=000001.SZ&start_date=20260301&end_date=20260331`
+- 按交易日全市场同步  
+  `POST /api/v1/jobs/sync/moneyflow/by-date?trade_date=20260331`
+
+示例响应：
+
+```json
+{"inserted":5179,"updated":0}
+```
+
+## 5. 质量检查
+
+### 股票日线质量检查
+
+`GET /api/v1/quality/stock-daily?start_date=20260301&end_date=20260331&exchange=SSE`
+
+字段说明：
+
+- `expected_trade_days`：交易日历中的应有交易日数
+- `existing_trade_days`：数据库已有日线的交易日数
+- `missing_trade_days`：缺失交易日数
+- `invalid_price_rows`：价格合法性异常记录数
+
+示例响应：
+
+```json
+{"start_date":"20260301","end_date":"20260331","exchange":"SSE","expected_trade_days":22,"existing_trade_days":22,"missing_trade_days":0,"invalid_price_rows":0}
+```
+
+## 6. 任务运维接口
+
+### 6.1 任务运行分页查询
+
+`GET /api/v1/jobs/runs?limit=100&cursor=&job_name=&status=`
+
+参数：
+
+- `limit`：默认 `100`，范围 `1-500`
+- `cursor`：上一页返回的 `next_cursor`
+- `job_name`：按任务名过滤
+- `status`：按状态过滤（如 `success/failed/running`）
+
+返回 `items` 字段核心：
+
+- `id, job_name, status, attempts, inserted, updated`
+- `replay_of_job_run_id`：若为重放任务，会指向原任务 id
+- `job_payload`：任务参数快照
+- `error_message, started_at, finished_at`
+
+示例请求：
+
+```bash
+curl "http://127.0.0.1:8099/api/v1/jobs/runs?limit=2"
+```
+
+示例响应：
+
+```json
+{
+  "items":[
+    {"id":12,"job_name":"sync_moneyflow_by_date_20260331","status":"success","attempts":1,"inserted":0,"updated":5179,"replay_of_job_run_id":null,"job_payload":"{\"trade_date\":\"20260331\"}","error_message":null,"started_at":"2026-04-01T08:20:01.123456","finished_at":"2026-04-01T08:20:04.778899"}
+  ],
+  "next_cursor":12
+}
+```
+
+---
+
+### 6.2 任务重放
+
+`POST /api/v1/jobs/runs/{job_run_id}/replay`
+
+说明：
+
+- 会读取原任务 `job_payload` 重新执行
+- 当前支持已接入同步体系的任务类型
+- 若同名任务正在执行，可能返回 `409`（任务锁冲突）
+
+示例请求：
+
+```bash
+curl -X POST "http://127.0.0.1:8099/api/v1/jobs/runs/12/replay"
+```
+
+示例响应：
+
+```json
+{"inserted":0,"updated":5179}
+```
+
+## 7. 状态码
+
+- `200`：成功
+- `400`：参数错误或业务校验失败
+- `401`：API Key 无效或缺失
+- `404`：资源不存在（如重放目标任务不存在）
+- `409`：任务锁冲突（同名任务并发）
+- `429`：超过限流
+- `500`：服务内部错误
+
+## 8. 常见问题
+
+### Q1: 行业板块数据为什么可能是空？
+
+- 可能是上游权限或积分限制
+- 建议先调用 `POST /jobs/sync/industry/boards` 看返回计数，再拉查询接口
+
+### Q2: 按日增量同步为什么没数据？
+
+- 增量同步依赖 `trade_calendar`，先同步交易日历
+- 确认 `exchange` 与交易日范围配置正确
+
+### Q3: 同步返回 `inserted=0, updated>0` 是异常吗？
+
+- 不是，表示该批数据已存在，本次执行以更新为主
