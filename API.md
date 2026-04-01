@@ -537,6 +537,83 @@ curl -H "X-Trace-Id: reg-test-trace" "http://127.0.0.1:8099/api/v1/jobs/runs?lim
 - `429`：超过限流
 - `500`：服务内部错误
 
+### 8.1 错误响应结构（机读）
+
+所有错误响应统一为：
+
+```json
+{
+  "error": {
+    "code": "INVALID_DATE_FORMAT",
+    "type": "validation_error",
+    "message": "start_date/end_date 需为YYYYMMDD",
+    "trace_id": "reg-test-trace"
+  }
+}
+```
+
+字段说明：
+
+- `code`：稳定错误码，客户端建议以此做分支处理
+- `type`：错误类型（validation_error / auth_error / resource_error / conflict_error / throttle_error / internal_error）
+- `message`：面向人类的错误说明
+- `trace_id`：链路追踪ID，便于日志排查
+
+### 8.2 错误码字典
+
+- `BAD_REQUEST`：通用请求错误（400）
+- `INVALID_DATE_FORMAT`：日期格式错误（400）
+- `INVALID_ARGUMENT`：参数校验失败（400）
+- `UNAUTHORIZED`：鉴权失败（401）
+- `FORBIDDEN`：无权限访问（403）
+- `NOT_FOUND`：资源不存在（404）
+- `JOB_LOCK_CONFLICT`：任务锁冲突（409）
+- `RATE_LIMITED`：请求被限流（429）
+- `INTERNAL_ERROR`：服务内部错误（500）
+
+### 8.3 客户端错误处理示例（Python SDK）
+
+```python
+from app.sdk import (
+    TradingDataClient,
+    InvalidDateFormatError,
+    NotFoundError,
+    RateLimitedError,
+    TradingDataSDKError,
+)
+
+client = TradingDataClient("http://127.0.0.1:8099", api_key="your_key")
+
+try:
+    result = client.sync_adj_factor("000001.SZ", "20260301", "20260331")
+    print("sync ok:", result)
+except InvalidDateFormatError as e:
+    print("日期参数错误", e.code, e.trace_id)
+except RateLimitedError as e:
+    print("请求过快，稍后重试", e.code, e.trace_id)
+except NotFoundError as e:
+    print("资源不存在", e.code, e.trace_id)
+except TradingDataSDKError as e:
+    print("业务错误", e.code, e.status_code, e.trace_id)
+```
+
+同步任务 SDK 常用方法：
+
+- `sync_stock_basic()`
+- `sync_trade_calendar(exchange)`
+- `sync_stock_daily(ts_code, start_date, end_date)`
+- `sync_stock_daily_by_date(trade_date)`
+- `sync_stock_daily_incremental(exchange, lookback_days)`
+- `sync_index_daily(ts_code, start_date, end_date)`
+- `sync_index_daily_by_date(trade_date)`
+- `sync_industry_boards(src)`
+- `sync_industry_members(index_code=None, src="SW")`
+- `sync_moneyflow(ts_code, start_date, end_date)`
+- `sync_moneyflow_by_date(trade_date)`
+- `sync_adj_factor(ts_code, start_date, end_date)`
+- `sync_adj_factor_by_date(trade_date)`
+- `backfill_recent(exchange, lookback_days, max_backfill_days)`
+
 ## 9. 常见问题
 
 ### Q1: 行业板块数据为什么可能是空？

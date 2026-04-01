@@ -1,10 +1,11 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.errors import raise_api_error
 from app.models import AdjFactor, IndexDaily, IndustryBoard, IndustryBoardMember, JobRun, Moneyflow, StockBasic, StockDaily, TradeCalendar
 from app.observability import snapshot_metrics
 from app.schemas import (
@@ -65,10 +66,10 @@ def _serialize_job_run(r: JobRun) -> dict:
 
 def _raise_sync_error(e: Exception):
     if isinstance(e, RuntimeError):
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        raise_api_error(code="JOB_LOCK_CONFLICT", message=str(e))
     if isinstance(e, ValueError):
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    raise HTTPException(status_code=500, detail=str(e)) from e
+        raise_api_error(code="INVALID_ARGUMENT", message=str(e))
+    raise_api_error(code="INTERNAL_ERROR", message=str(e))
 
 
 def _replay_job(db: Session, source: JobRun):
@@ -532,7 +533,7 @@ def run_sync_stock_daily(
     db: Session = Depends(get_db),
 ):
     if len(start_date) != 8 or len(end_date) != 8:
-        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="start_date/end_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -552,7 +553,7 @@ def run_sync_stock_daily_by_date(
     db: Session = Depends(get_db),
 ):
     if len(trade_date) != 8:
-        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="trade_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -593,7 +594,7 @@ def run_sync_index_daily(
     db: Session = Depends(get_db),
 ):
     if len(start_date) != 8 or len(end_date) != 8:
-        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="start_date/end_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -613,7 +614,7 @@ def run_sync_index_daily_by_date(
     db: Session = Depends(get_db),
 ):
     if len(trade_date) != 8:
-        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="trade_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -681,7 +682,7 @@ def run_sync_moneyflow(
     db: Session = Depends(get_db),
 ):
     if len(start_date) != 8 or len(end_date) != 8:
-        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="start_date/end_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -701,7 +702,7 @@ def run_sync_moneyflow_by_date(
     db: Session = Depends(get_db),
 ):
     if len(trade_date) != 8:
-        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="trade_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -723,7 +724,7 @@ def run_sync_adj_factor(
     db: Session = Depends(get_db),
 ):
     if len(start_date) != 8 or len(end_date) != 8:
-        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="start_date/end_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -743,7 +744,7 @@ def run_sync_adj_factor_by_date(
     db: Session = Depends(get_db),
 ):
     if len(trade_date) != 8:
-        raise HTTPException(status_code=400, detail="trade_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="trade_date 需为YYYYMMDD")
     try:
         result = execute_sync_job(
             db,
@@ -787,7 +788,7 @@ def get_stock_daily_quality(
     db: Session = Depends(get_db),
 ):
     if len(start_date) != 8 or len(end_date) != 8:
-        raise HTTPException(status_code=400, detail="start_date/end_date 需为YYYYMMDD")
+        raise_api_error(code="INVALID_DATE_FORMAT", message="start_date/end_date 需为YYYYMMDD")
     report = check_stock_daily_quality(db, start_date=start_date, end_date=end_date, exchange=exchange)
     return report
 
@@ -808,7 +809,7 @@ def get_job_runs(
 def replay_job_run(job_run_id: int, db: Session = Depends(get_db)):
     source = get_job_run_by_id(db=db, job_run_id=job_run_id)
     if not source:
-        raise HTTPException(status_code=404, detail="任务运行记录不存在")
+        raise_api_error(code="NOT_FOUND", message="任务运行记录不存在")
     try:
         result = _replay_job(db=db, source=source)
     except Exception as e:
