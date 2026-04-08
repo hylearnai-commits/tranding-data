@@ -124,6 +124,20 @@ BASE_URL=http://127.0.0.1:8099 EXCHANGE=SSE LOOKBACK_DAYS=3 ./scripts/eod-sync.s
 SKIP_BACKFILL=1 ./scripts/eod-sync.sh
 ```
 
+### 全市场历史回填（本地）
+
+```bash
+python scripts/full_market_backfill.py --start-date 20100101 --end-date 20260408 --sleep-seconds 1.0
+```
+
+- 默认按交易日顺序拉取：股票日线、指数日线、资金流、复权因子
+- 通过 `--sleep-seconds` 控制节流，降低上游接口频率压力
+- 默认失败后自动重试，直到该交易日成功（自动一直跑到完成）
+- 可通过 `--retry-sleep-seconds` 调整重试间隔
+- 可通过 `--max-retries-per-date` 设置单交易日最大重试次数（`0` 表示无限重试）
+- 断点续跑文件：`scripts/.full_market_backfill_checkpoint.json`
+- 中断后可直接重跑同一命令继续
+
 ### Linux systemd 启动示例
 
 服务文件示例：`deploy/systemd/trading-data.service`
