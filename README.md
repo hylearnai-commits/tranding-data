@@ -95,6 +95,35 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1 -HostName 0.0.0
 
 脚本位置：`scripts/start-dev.ps1`
 
+### 每日收盘后一键拉取（Windows PowerShell）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\eod-sync.ps1
+```
+
+常用参数：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\eod-sync.ps1 -BaseUrl http://127.0.0.1:8099 -Exchange SSE -LookbackDays 3
+powershell -ExecutionPolicy Bypass -File .\scripts\eod-sync.ps1 -SkipBackfill
+```
+
+脚本会按顺序执行：基础信息、交易日历、股票增量、按日补齐（股票/指数/资金流/复权因子）、自动回补（可选）。
+
+### 每日收盘后一键拉取（Linux）
+
+```bash
+chmod +x ./scripts/eod-sync.sh
+./scripts/eod-sync.sh
+```
+
+常用参数（环境变量）：
+
+```bash
+BASE_URL=http://127.0.0.1:8099 EXCHANGE=SSE LOOKBACK_DAYS=3 ./scripts/eod-sync.sh
+SKIP_BACKFILL=1 ./scripts/eod-sync.sh
+```
+
 ### Linux systemd 启动示例
 
 服务文件示例：`deploy/systemd/trading-data.service`
